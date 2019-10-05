@@ -1,4 +1,4 @@
-import org.apache.spark.{SparkConf}
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.SparkSession
 
 import org.apache.log4j.{Level, Logger}
@@ -16,7 +16,7 @@ object Ranker {
       .master("local")
       .config(conf)
       .getOrCreate
-    import spark.implicits._
+//    import spark.implicits._  in case of emergency
     val sc = spark.sparkContext
     val logger = Logger.getLogger("org.apache.spark")
     logger.setLevel(Level.ERROR)
@@ -31,16 +31,20 @@ object Ranker {
     val vectorized_query = Functions.vectorize_text(search_query, word_to_id_idf_map)
 
     // compute relevances with each document
-    val relevances = RelevanceAnalizator.computeRelevance(vectorized_query, doc_index)
+    val doc_index_with_relevances = RelevanceAnalizator.computeRelevance(vectorized_query, doc_index)
+
 
     // get top 10  / Array [(Int, Double)]
-    val top_relevances = RelevanceAnalizator.getTopRelevances(relevances, topN = 10)
+    val top_documents = RelevanceAnalizator.getTopRelevances(doc_index_with_relevances, topN = 20)
 
     // print top relevances (doc_id, rel)
-    println("Doc_id\tRelevance")
-    top_relevances foreach {
-      case (doc_id, rel) => println(f"$doc_id  \t$rel%.4f")
-    }
+    println("%1$10s %2$-60s %3$-10s ".format("DocID", "Title", "Relevance"))
 
+    top_documents foreach {
+      row =>
+        println(f"${row.getAs("id")}%10s" +
+          f" ${row.getAs("title")}%-60s" +
+          f" ${row.getAs[Double]("relevance")}%.6f")
+    }
   }
 }

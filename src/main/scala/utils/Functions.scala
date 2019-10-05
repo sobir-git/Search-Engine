@@ -2,45 +2,44 @@ package utils
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
 
-import scala.collection.JavaConverters._
 
 object Functions {
   def normalize_word(word: String): String = {
     word.toLowerCase.replaceAll("""[\p{Punct}]""", "")
   }
-  def to_word_freq_map(text: String): Map[String, Int] = {
-    text.split(" ").map(word => normalize_word(word))
+
+  def to_word_freq_map(text: String): Map[String, Long] = {
+    text.split("""\s+""").map(word => normalize_word(word))
       .groupBy(identity).mapValues(arr => arr.length)
   }
 
-  def normalize_by_idf_and_encode_with_id(word_to_freq: Map[String, Int], word_to_id_idf: scala.collection.Map[String, (Int, Int)]) = {
+  def normalize_by_idf_and_encode_with_id(word_to_id_idf: scala.collection.Map[String, (Long, Long)])(word_to_freq: Map[String, Long]): Map[Long, Double] = {
     word_to_freq.map {
       case (word, freq)
-      => word_to_id_idf.getOrElse(word, (-1, 0))._1 -> freq.toDouble / word_to_id_idf(word)._2
+      => word_to_id_idf.getOrElse(word, (-1L, 0))._1 -> freq.toDouble / word_to_id_idf.getOrElse(word, (-1L, 1L))._2
     }
   }
 
-  def vectorize_text(text: String, word_to_id_idf: scala.collection.Map[String, (Int, Int)]) = {
+  def vectorize_text(text: String, word_to_id_idf: scala.collection.Map[String, (Long, Long)]): Map[Long, Double] = {
     val word_to_freq_map = to_word_freq_map(text)
-    normalize_by_idf_and_encode_with_id(word_to_freq_map, word_to_id_idf)
+    normalize_by_idf_and_encode_with_id(word_to_id_idf)(word_to_freq_map)
   }
 
-  def word_id_idf_collectAsMap(word_to_id_idf: DataFrame) = {
+  def word_id_idf_collectAsMap(word_to_id_idf: DataFrame): collection.Map[String, (Long, Long)] = {
     val word_to_id_idf_map = word_to_id_idf.rdd.map {
       row =>
         (
-          row(1).asInstanceOf[String],
-          (row(0).asInstanceOf[Int], row(2).asInstanceOf[Int])
+          row.getAs("word").asInstanceOf[String],
+          (row.getAs[Long]("id"), row.getAs[Long]("idf"))
         )
     }.collectAsMap
     word_to_id_idf_map
   }
 
-  def load_word_to_id_idf_map(): collection.Map[String, (Int, Int)] = {
+  def load_word_to_id_idf_map(): collection.Map[String, (Long, Long)] = {
     val spark = SparkSession.active
     val word_to_id_idf = spark.read.parquet("tmp/word_id")
     val word_to_id_idf_map = word_id_idf_collectAsMap(word_to_id_idf)
     word_to_id_idf_map
   }
-
 }
