@@ -1,18 +1,21 @@
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.sql.SparkSession
-
 import org.apache.log4j.{Level, Logger}
+import utils.Functions
 
+import scala.collection.JavaConverters._
 
 object Indexer {
   def main(args: Array[String]): Unit = {
 
-    val conf = new SparkConf().setAppName("searchEngineIndexer")
+    val conf = new SparkConf()
+      .setMaster("local")
+      .setAppName("searchEngineIndexer")
 
     val spark = SparkSession.builder
-      .appName("SparkSessionExample")
       .config(conf)
-      .getOrCreate
+      .getOrCreate()
+
     import spark.implicits._
     val sc = spark.sparkContext
     val logger = Logger.getLogger("org.apache.spark")
@@ -25,44 +28,52 @@ object Indexer {
     val textFile = sc.textFile(inputPath)
     val json_df = spark.read.json(textFile)
 
-    val doc_words = json_df.map(row => (row.getAs("id").toString.toInt, row.getAs("text").toString.split(" "))).map { case (id, wordarr) => (id, wordarr.map(word => word.toLowerCase.replaceAll("""[\p{Punct}]""", ""))) }
-
-
-    // map[unique word -> count] for each doc
-    val doc_word_to_counts = doc_words
-      .map { case (id, wordarr) => (id, wordarr.groupBy(identity).mapValues(arr => arr.length)) }
+    val doc_word_to_counts = json_df.map(
+      row => (
+            row.getAs("id").toString.toInt,
+            Functions.to_word_freq_map(row.getAs("text"))
+            )
+    )
 
     val word_to_id_idf = doc_word_to_counts
       .flatMap(t => t._2.transform((word, cnt) => 1))
       .rdd
       .reduceByKey(_ + _)
-      .sortBy(_._1)
+//      .sortBy(_._1)  // optional for debugging
       .zipWithIndex
-      .map { case ((word, idf), id) => (id, word, idf) }
+      .map { case ((word, idf), id) => (id.toInt, word, idf) }
       .toDF("id", "word", "idf")
 
     // save word_to_id
     word_to_id_idf.write.mode("overwrite").parquet("tmp/word_id")
 
     // word => (id, idf)
-    val word_to_id_idf_map = word_to_id_idf.rdd.map { row => (row(1).toString, (row(0).toString.toInt, row(2).toString.toInt)) }.collectAsMap
+    val word_to_id_idf_map = word_to_id_idf.rdd.map {
+      row => (
+        row(1).asInstanceOf[String],
+        (row(0).asInstanceOf[Int], row(2).asInstanceOf[Int])
+      )
+    }.collectAsMap
+
     logger.error("Number of words: " + word_to_id_idf.count())
 
-
     // doc_id => [(word_id -> tf/idf)]
-    val doc_index = doc_word_to_counts.
-      map { case (doc_id, wordmap)
-      => (doc_id, wordmap.map { case (word, tf)
-      => word_to_id_idf_map(word)._1 -> tf.toDouble / word_to_id_idf_map(word)._2
-      })
-      }.
-      withColumnRenamed("_1", "doc_id").
-      withColumnRenamed("_2", "wordmap")
+    val doc_index = doc_word_to_counts
+      .map { case (doc_id, wordmap)
+            => (
+                  doc_id,
+                  Functions.normalize_by_idf_and_encode_with_id(
+                    wordmap,
+                    word_to_id_idf_map
+                  )
+               )
+      }
+      .withColumnRenamed("_1", "doc_id")
+      .withColumnRenamed("_2", "wordmap")
 
     logger.error("Number of documents: " + doc_index.count() )
 
     // save doc_index
     doc_index.write.mode("overwrite").parquet("tmp/doc_index")
   }
-
 }
