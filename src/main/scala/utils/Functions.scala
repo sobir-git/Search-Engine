@@ -1,5 +1,7 @@
 package utils
 
+import org.apache.spark.sql.{DataFrame, SparkSession}
+
 import scala.collection.JavaConverters._
 
 object Functions {
@@ -22,4 +24,23 @@ object Functions {
     val word_to_freq_map = to_word_freq_map(text)
     normalize_by_idf_and_encode_with_id(word_to_freq_map, word_to_id_idf)
   }
+
+  def word_id_idf_collectAsMap(word_to_id_idf: DataFrame) = {
+    val word_to_id_idf_map = word_to_id_idf.rdd.map {
+      row =>
+        (
+          row(1).asInstanceOf[String],
+          (row(0).asInstanceOf[Int], row(2).asInstanceOf[Int])
+        )
+    }.collectAsMap
+    word_to_id_idf_map
+  }
+
+  def load_word_to_id_idf_map(): collection.Map[String, (Int, Int)] = {
+    val spark = SparkSession.active
+    val word_to_id_idf = spark.read.parquet("tmp/word_id")
+    val word_to_id_idf_map = word_id_idf_collectAsMap(word_to_id_idf)
+    word_to_id_idf_map
+  }
+
 }
