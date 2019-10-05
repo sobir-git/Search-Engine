@@ -1,0 +1,9 @@
+#export YARN_CONF_DIR="/home/sobir/hadoop/etc-hadoop"
+#export HADOOP_USER_NAME="vagrant"
+export sparkbin="/home/sobir/spark-2.4.4-bin-hadoop2.7/bin"
+export srcdir="src/main/scala"
+echo "srcdir = $srcdir"
+echo "sparkbin = $sparkbin"
+export appjar=$(find . -name *.jar)
+echo "appjar = $appjar"
+export resources="/home/sobir/IdeaProjects/WordCounter/src/main/resources"
