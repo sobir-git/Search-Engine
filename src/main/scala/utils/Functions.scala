@@ -36,9 +36,9 @@ object Functions {
     word_to_id_idf_map
   }
 
-  def load_word_to_id_idf_map(): collection.Map[String, (Long, Long)] = {
+  def load_word_to_id_idf_map(indexPath: String): collection.Map[String, (Long, Long)] = {
     val spark = SparkSession.active
-    val word_to_id_idf = spark.read.parquet("tmp/word_id")
+    val word_to_id_idf = spark.read.parquet(s"$indexPath/word_id")
     val word_to_id_idf_map = word_id_idf_collectAsMap(word_to_id_idf)
     word_to_id_idf_map
   }
