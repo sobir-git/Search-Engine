@@ -9,7 +9,7 @@ object Indexer {
   def main(args: Array[String]): Unit = {
 
     val conf = new SparkConf().
-      setMaster("local").
+      setMaster("local[4]").
       setAppName("searchEngineIndexer")
 
     val spark = SparkSession.builder.
@@ -31,17 +31,23 @@ object Indexer {
     val doc1DF = doc0DF.withColumn("word_freq",
       udf(Functions.to_word_freq_map _).apply(doc0DF("text")))
 
-    val word_to_idf = doc1DF.select(explode('word_freq) as Seq("word", "freq")).groupBy('word).count.withColumnRenamed("count", "idf")
+    val word_to_idf = doc1DF.select(explode('word_freq) as Seq("word", "freq")).
+      groupBy('word).
+      count.
+      withColumnRenamed("count", "idf")
+
+//    word_to_idf.map(row=>row.getAs("word"))
     val word_to_id_idf = word_to_idf.withColumn("id", monotonically_increasing_id)
+// TODO: cache to word_to_id_idf to memory
 
-
-    // save word_to_id
+    // save word_to_id_idf
+    word_to_id_idf.cache()
     word_to_id_idf.write.mode("overwrite").parquet("tmp/word_id")
 
     // word => (id, idf)
     val word_to_id_idf_map = Functions.word_id_idf_collectAsMap(word_to_id_idf)
 
-    logger.error("Number of words: " + word_to_id_idf.count())
+//    logger.error("Number of words: " + word_to_id_idf.count())
 
     val freq_to_tfidf = udf(
       Functions.normalize_by_idf_and_encode_with_id(word_to_id_idf_map)(_: Map[String, Long])
@@ -58,5 +64,9 @@ object Indexer {
 
     // save doc_index
     doc_index.write.mode("overwrite").parquet("tmp/doc_index")
+
+    println("Indexing done!")
+    System.in.read
+    spark.stop
   }
 }
