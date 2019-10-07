@@ -9,6 +9,10 @@ object Functions {
   }
 
   def to_word_freq_map(text: String): Map[String, Long] = {
+    if (text == null) {
+      println("BIGDATA:: What the hell?")
+      return Map()
+    }
     text.split("""\s+""").map(word => normalize_word(word))
       .groupBy(identity).mapValues(arr => arr.length)
   }
