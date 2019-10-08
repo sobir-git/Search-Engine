@@ -1,8 +1,5 @@
 # A simple search engine application with Spark
 
-### Source files
-1. # A simple search engine application with Spark
-
 ## Source files
 The directory structure is usual. Source files reside inside `src\main\scala` directory. They are:
 1. **Indexer.scala** - Contains logic of Indexing.
@@ -37,4 +34,3 @@ Example:
 Once you get the results of first query, the application will ask for the next query.
 
 Run with `-h` argument to see full help message
-
