@@ -1,7 +1,8 @@
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import org.apache.log4j.{Level, Logger}
 import utils.Functions
+import org.apache.spark.sql.functions.avg
 
 import scala.collection.mutable
 
@@ -24,12 +25,15 @@ object Ranker {
 
     Examples:
       Ranker inner
-      Ranker inner World War II
+      Ranker inner Differential Geometry
+      Ranker -i IndexPath inner Differential Geometry
     """
 
   var indexPath = "/tmp"
-  var relevance_function = "inner"
-  var search_query = ""
+  var relevance_function: String = _
+  var search_query: String = _
+  var average_document_length: Double = _
+  var doc_count: Int = _
 
   def interpretArgs(args: mutable.Buffer[String]): Unit = {
 
@@ -48,12 +52,9 @@ object Ranker {
     }
 
     relevance_function = args(0).toLowerCase
-    if (relevance_function == "inner") {
-    } else if (relevance_function == "bm25") {
-      println("bm25 is not supported yet, relying back on \"inner\"")
-    }
-    else {
-      println(s"invalid relevance function: $relevance_function")
+    if (!Seq("inner", "bm25").contains(relevance_function)) {
+      println(s"Invalid relevance function: $relevance_function")
+      println("It has to be either 'inner' or 'bm25'")
       System.exit(1)
     }
 
@@ -73,6 +74,7 @@ object Ranker {
     }
   }
 
+
   def main(args: Array[String]): Unit = {
     val bargs = args.toBuffer
     interpretArgs(bargs)
@@ -82,11 +84,21 @@ object Ranker {
     val sc = spark.sparkContext
     Logger.getLogger("org.apache.spark").setLevel(Level.ERROR)
 
-    // read document index,   doc_id, Map(word->tf/idf)
+    // read document index,   doc_id, Map(word->tf)
     val doc_index = spark.read.parquet(s"$indexPath/doc_index")
+    doc_count = doc_index.count().toInt
+    println(s"document count: $doc_count")
 
-    //load Map[word->(id, idf)] / will be used to vectorize text
-    val word_to_id_idf_map = Functions.load_word_to_id_idf_map(indexPath)
+    average_document_length = doc_index.select(avg("length")).head.getAs[Double](0)
+    println(s"average_document_length: $average_document_length")
+
+    //load Map[word->id] / will be used to vectorize text
+    val word_to_id = Functions.load_word_to_id(s"$indexPath/words")
+    println(s"word to id :  ${word_to_id.take(30)}")
+
+    val id_to_idf = Functions.load_id_to_idf(s"$indexPath/words")
+
+    println(s"id to idf :  ${id_to_idf.take(30)}")
 
     while (true) {
       while (search_query == "") {
@@ -95,10 +107,27 @@ object Ranker {
       }
 
       // vectorize query
-      val vectorized_query = Functions.vectorize_text(search_query, word_to_id_idf_map)
+      val vectorized_query = Functions.vectorize_text(search_query, word_to_id)
+      println(s"vectorized_query = $vectorized_query")
 
+      var doc_index_with_relevances: DataFrame = null
       // compute relevances with each document
-      val doc_index_with_relevances = RelevanceAnalizator.computeRelevance(vectorized_query, doc_index)
+      if (relevance_function == "inner"){
+        doc_index_with_relevances = RelevanceAnalizator.computeRelevanceInnerProduct(
+          vectorized_query = vectorized_query,
+          doc_index = doc_index,
+          id_to_idf = id_to_idf
+        )
+      } else if (relevance_function == "bm25") {
+        doc_index_with_relevances = RelevanceAnalizator.computeRelevanceBM25(
+          vectorized_query = vectorized_query,
+          doc_index = doc_index,
+          id_to_idf = id_to_idf,
+          avgdl = average_document_length,
+          doc_count = doc_count
+        )
+      }
+
 
       // get top 10  / Array [(Int, Double)]
       val top_documents = RelevanceAnalizator.getTopRelevances(doc_index_with_relevances, topN = 20)

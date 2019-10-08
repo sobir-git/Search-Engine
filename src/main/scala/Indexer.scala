@@ -1,21 +1,25 @@
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.log4j.{Level, Logger}
+import org.apache.spark.rdd.RDD
 import utils.Functions
 import org.apache.spark.sql.functions.{udf, _}
+
+import scala.collection.mutable
 
 
 object Indexer {
 
   val usage = """
   Usages:
-    Indexer input_path [output_path]        Index the files in input_path and store in output_path
+    Indexer [-w wordsPath] input_path [output_path]        Index the files in input_path and store in output_path
     Indexer [-h]                            Print this help message
     """
   var inputPath = ""
   var outputPath = "/tmp"
+  var wordsPath = ""
 
-  def handleArgs(args: Array[String]) = {
+  def handleArgs(args: mutable.Buffer[String]) = {
     if (args.length == 0){
       println(usage)
       System.exit(0)
@@ -23,6 +27,13 @@ object Indexer {
       println(usage)
       System.exit(0)
     }
+
+    if (args.head == "-w"){
+      args.remove(0)
+      wordsPath = args.head
+      args.remove(0)
+    }
+
     inputPath = args(0)
     if (args.length == 2){
       outputPath = args(1)
@@ -39,7 +50,7 @@ object Indexer {
 
   def main(args: Array[String]): Unit = {
     // handle command-line arguments
-    handleArgs(args)
+    handleArgs(args.toBuffer)
     val spark = SparkSession.builder.
       getOrCreate()
 
@@ -55,44 +66,76 @@ object Indexer {
     val doc1DF = doc0DF.withColumn("word_freq",
       udf(Functions.to_word_freq_map _).apply(doc0DF("text")))
 
-    log("creating word_to_idf")
-    val word_to_idf = doc1DF.select(explode('word_freq) as Seq("word", "freq")).
-      groupBy('word).
-      count.
-      withColumnRenamed("count", "idf")
+    var word_to_id: scala.collection.Map[String, Long] = Map("sobir"-> 22L)
+    var id_to_idf: scala.collection.Map[Long, Int] = Map()
+    if (wordsPath != "") {
+      log(s"loading words from $wordsPath")
+      word_to_id = Functions.load_word_to_id(wordsPath)
+      id_to_idf = Functions.load_id_to_idf(wordsPath)
+    } else {
+      log("creating word_to_idf")
+      val word_to_idf_RDD = doc1DF.select(explode('word_freq) as Seq("word", "freq")).
+        groupBy('word).
+        count.
+        withColumnRenamed("count", "idf").
+        as[(String, Long)].rdd
 
-    log("adding ids; creating word_to_id_idf")
-    val word_to_id_idf = word_to_idf.withColumn("id", monotonically_increasing_id)
+      val word_to_id_RDD = word_to_idf_RDD.keys.zipWithUniqueId()
 
-    // save word_to_id_idf
-    word_to_id_idf.write.mode("overwrite").parquet(s"$outputPath/word_id")
+      log("saving word_to_id_RDD")
+      word_to_id_RDD.saveAsSequenceFile(s"$outputPath/words/word_to_id")
 
-    log("creating word_to_id_idf_map")
-    // word => (id, idf)
-    val word_to_id_idf_map = Functions.word_id_idf_collectAsMap(word_to_id_idf)
+      log("creating word_to_id")
+      word_to_id = word_to_id_RDD.collectAsMap()
 
-    log("creating word_to_id_idf_map")
-    val freq_to_tfidf = udf(
-      Functions.normalize_by_idf_and_encode_with_id(word_to_id_idf_map)(_: Map[String, Long])
-    )
+      val id_to_idf_RDD = word_to_idf_RDD.map {
+        case (word, idf) => word_to_id(word) -> idf.toInt
+      }
 
-    log("creating doc2DF")
+      log("saving id_to_idfRDD")
+      id_to_idf_RDD.saveAsSequenceFile(s"$outputPath/words/id_to_idf")
+
+      log("creating id_to_idf")
+      id_to_idf = id_to_idf_RDD.collectAsMap()
+
+      println(s"id to idf:  ${id_to_idf.take(20)}")
+    }
+
+    log(s"word count: ${word_to_id.size}")
+
+    def replace_word_with_id(word_freq: Map[String, Int]): Map[Long, Int] = {
+      word_freq.map{
+        case (word, freq) => (word_to_id(word), freq)
+      }
+    }
     // adds column tf/idf
     val doc2DF = doc1DF.withColumn(
-      "vector",
-      freq_to_tfidf.apply(doc1DF("word_freq"))
+      "id_freq",
+      udf(replace_word_with_id _).apply(doc1DF("word_freq"))
+    )
+
+    // calculate document length
+    val calc_doc_length = (id_freq: Map[Long, Int]) => {
+      id_freq.values.sum
+    }
+    val doc3DF = doc2DF.withColumn(
+      "length",
+      udf(calc_doc_length).apply('id_freq)
     )
 
     log("creating doc_index")
-    val doc_index = doc2DF.select("id", "title", "vector")
+    val doc_index = doc3DF.select("id", "title", "id_freq", "length")
 
     log("writing doc_index")
     // save doc_index
     doc_index.write.mode("overwrite").parquet(s"$outputPath/doc_index")
 
-    log("writing final results to consolde")
+    log("showing doc_index")
+    doc_index.show
+
+    log("writing final results to console")
     println("\n\n\n----------------------------------------------------------------------")
-    println("Number of words: " + word_to_id_idf_map.size)
+    println("Number of words: " + word_to_id.size)
     println("Number of documents: " + doc_index.count())
     println("Indexing done!")
   }
