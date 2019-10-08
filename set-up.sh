@@ -1,5 +1,7 @@
 #export YARN_CONF_DIR="/home/sobir/hadoop/etc-hadoop"
 #export HADOOP_USER_NAME="vagrant"
+#export YARN_CONF_DIR="/home/sobir/inno-cluster-hadoop-etc"
+#export HADOOP_USER_NAME="morocco"
 export sparkbin="/home/sobir/spark-2.4.4-bin-hadoop2.7/bin"
 export srcdir="src/main/scala"
 echo "srcdir = $srcdir"

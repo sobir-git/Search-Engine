@@ -7,34 +7,44 @@ import org.apache.spark.sql.functions.avg
 import scala.collection.mutable
 
 
+/**
+ * This object holds the logic of Ranker
+ * It uses RelevanceAnalizator functions to compute ranks
+ *
+ */
 object Ranker {
 
   val usage =
     """
     Usage:
-      Ranker [options] relevance_function                Run Ranker with relevance_function
-      Ranker [options] relevance_function [queries*]     Search for query using relevance_function
+      Ranker [options] rank_function                Run Ranker with rank_function
+      Ranker [options] rank_function [queries*]     Search for query using rank_function
       Ranker -h                                          Print this help message
 
     Where:
-      relevance_function     currently only "inner"  ("BM25" in the future;))
+      rank_function     currently only "inner"  ("BM25" in the future;))
       [queries*]             query string
 
     Options:
       -i index_path          Index path - the output path of Indexer
 
     Examples:
-      Ranker inner
-      Ranker inner Differential Geometry
+      Ranker -i IndexPath inner
+      Ranker -i IndexPath inner Differential Geometry
       Ranker -i IndexPath inner Differential Geometry
     """
 
   var indexPath = "/tmp"
-  var relevance_function: String = _
+  var rank_function: String = _
   var search_query: String = _
   var average_document_length: Double = _
   var doc_count: Int = _
 
+  /**
+   * Interpret command-line arguments
+   *
+   * @param args - command line arguments
+   */
   def interpretArgs(args: mutable.Buffer[String]): Unit = {
 
     if (args.isEmpty) {
@@ -51,9 +61,9 @@ object Ranker {
       args.remove(0)
     }
 
-    relevance_function = args(0).toLowerCase
-    if (!Seq("inner", "bm25").contains(relevance_function)) {
-      println(s"Invalid relevance function: $relevance_function")
+    rank_function = args(0).toLowerCase
+    if (!Seq("inner", "bm25").contains(rank_function)) {
+      println(s"Invalid ranking function: $rank_function")
       println("It has to be either 'inner' or 'bm25'")
       System.exit(1)
     }
@@ -61,16 +71,21 @@ object Ranker {
     search_query = args.splitAt(1)._2.mkString(" ")
   }
 
+  /**
+   * Display the results of query
+   *
+   * @param top_documents - top ranked documents
+   */
   def displayResults(top_documents: Array[Row]): Unit = {
-    // print top relevances (doc_id, rel)
+    // print top ranks (doc_id, rel)
     println(s"\n\nQuery results for: $search_query")
-    println("%1$10s %2$-60s %3$-10s ".format("DocID", "Title", "Relevance"))
+    println("%1$10s %2$-60s %3$-10s ".format("DocID", "Title", "Rank"))
 
     top_documents foreach {
       row =>
         println(f"${row.getAs("id")}%10s" +
           f" ${row.getAs("title")}%-60s" +
-          f" ${row.getAs[Double]("relevance")}%.6f")
+          f" ${row.getAs[Double]("rank")}%.6f")
     }
   }
 
@@ -110,16 +125,16 @@ object Ranker {
       val vectorized_query = Functions.vectorize_text(search_query, word_to_id)
       println(s"vectorized_query = $vectorized_query")
 
-      var doc_index_with_relevances: DataFrame = null
       // compute relevances with each document
-      if (relevance_function == "inner"){
-        doc_index_with_relevances = RelevanceAnalizator.computeRelevanceInnerProduct(
+      var doc_index_with_relevances: DataFrame = null
+      if (rank_function == "inner") {
+        doc_index_with_relevances = RelevanceAnalizator.computeRankInnerProduct(
           vectorized_query = vectorized_query,
           doc_index = doc_index,
           id_to_idf = id_to_idf
         )
-      } else if (relevance_function == "bm25") {
-        doc_index_with_relevances = RelevanceAnalizator.computeRelevanceBM25(
+      } else if (rank_function == "bm25") {
+        doc_index_with_relevances = RelevanceAnalizator.computeRankBM25(
           vectorized_query = vectorized_query,
           doc_index = doc_index,
           id_to_idf = id_to_idf,
@@ -129,8 +144,8 @@ object Ranker {
       }
 
 
-      // get top 10  / Array [(Int, Double)]
-      val top_documents = RelevanceAnalizator.getTopRelevances(doc_index_with_relevances, topN = 20)
+      // get top 20 relevant documents
+      val top_documents = RelevanceAnalizator.getTopRanked(doc_index_with_relevances, topN = 20)
 
       // display results in console
       displayResults(top_documents)

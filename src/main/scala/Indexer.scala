@@ -8,9 +8,15 @@ import org.apache.spark.sql.functions.{udf, _}
 import scala.collection.mutable
 
 
+/**
+ * Indexer
+ * This contains the logic to run indexing
+ *
+ */
 object Indexer {
 
-  val usage = """
+  val usage =
+    """
   Usages:
     Indexer [-w wordsPath] input_path [output_path]        Index the files in input_path and store in output_path
     Indexer [-h]                            Print this help message
@@ -19,23 +25,29 @@ object Indexer {
   var outputPath = "/tmp"
   var wordsPath = ""
 
+
+  /**
+   * Interpret command-line arguments
+   *
+   * @param args - command line arguments
+   */
   def handleArgs(args: mutable.Buffer[String]) = {
-    if (args.length == 0){
+    if (args.length == 0) {
       println(usage)
       System.exit(0)
-    } else if (args(0)=="-h") {
+    } else if (args(0) == "-h") {
       println(usage)
       System.exit(0)
     }
 
-    if (args.head == "-w"){
+    if (args.head == "-w") {
       args.remove(0)
       wordsPath = args.head
       args.remove(0)
     }
 
     inputPath = args(0)
-    if (args.length == 2){
+    if (args.length == 2) {
       outputPath = args(1)
     }
   }
@@ -43,7 +55,7 @@ object Indexer {
   val logger: Logger = Logger.getLogger("org.apache.spark")
   logger.setLevel(Level.ERROR)
 
-  def log(s: Any): Unit ={
+  def log(s: Any): Unit = {
     logger.fatal("BIGDATA:: " + s)
     println("BIGDATA:: " + s)
   }
@@ -57,7 +69,6 @@ object Indexer {
     import spark.implicits._
 
     // has columns id, text, title, url
-
     log("reading docDF")
     val doc0DF = spark.read.json(inputPath)
 
@@ -66,7 +77,7 @@ object Indexer {
     val doc1DF = doc0DF.withColumn("word_freq",
       udf(Functions.to_word_freq_map _).apply(doc0DF("text")))
 
-    var word_to_id: scala.collection.Map[String, Long] = Map("sobir"-> 22L)
+    var word_to_id: scala.collection.Map[String, Long] = Map("sobir" -> 22L)
     var id_to_idf: scala.collection.Map[Long, Int] = Map()
     if (wordsPath != "") {
       log(s"loading words from $wordsPath")
@@ -104,10 +115,11 @@ object Indexer {
     log(s"word count: ${word_to_id.size}")
 
     def replace_word_with_id(word_freq: Map[String, Int]): Map[Long, Int] = {
-      word_freq.map{
+      word_freq.map {
         case (word, freq) => (word_to_id(word), freq)
       }
     }
+
     // adds column tf/idf
     val doc2DF = doc1DF.withColumn(
       "id_freq",
